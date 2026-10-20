@@ -11,6 +11,7 @@ permissions:
 env:
   ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
   ANDROID_HOME: /usr/local/lib/android/sdk
+  GRADLE_HOME: /opt/gradle-8.7
 
 jobs:
   build:
@@ -19,7 +20,6 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      # 手机上无法上传整个目录，允许直接上传一个源码 zip，这里自动展开
       - name: 展开源码包
         run: |
           set -e
@@ -31,7 +31,8 @@ jobs:
             cp -a "$ROOT"/. "$GITHUB_WORKSPACE"/
             rm -f source.zip
           fi
-          rm -f local.properties
+          rm -f local.properties gradlew gradlew.bat
+          rm -rf gradle/wrapper
           echo "=== 项目关键文件 ==="
           find . -name "*.gradle.kts" -o -name "AndroidManifest.xml" | head
           ls -la
@@ -42,7 +43,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 不用 android-actions/setup-android（它会尝试安装已废弃的 tools 包导致失败），改为手动装
       - name: 安装 Android SDK（命令行工具 + android-34）
         run: |
           set -e
@@ -63,28 +63,24 @@ jobs:
           echo "--- 已安装 ---"
           ls "$ANDROID_SDK_ROOT/platforms" "$ANDROID_SDK_ROOT/build-tools"
           echo "sdk.dir=$ANDROID_SDK_ROOT" > "$GITHUB_WORKSPACE/local.properties"
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
       - name: 安装 Gradle 8.7
         run: |
           curl -sSL --retry 3 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          sudo rm -rf "$GRADLE_HOME"
           sudo unzip -q -o /tmp/gradle.zip -d /opt
-          sudo chmod +x /opt/gradle-8.7/bin/gradle
-          echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
-          export PATH="/opt/gradle-8.7/bin:$PATH"
-          gradle --version
+          sudo chmod +x "$GRADLE_HOME/bin/gradle"
+          "$GRADLE_HOME/bin/gradle" --version
 
-      - name: 生成 Gradle Wrapper
-        run: |
-          export PATH="/opt/gradle-8.7/bin:$PATH"
-          gradle wrapper --gradle-version 8.7 --distribution-type bin --no-daemon
-          chmod +x ./gradlew
-          ls -la gradlew gradle/wrapper/
-
+      # 直接用系统 Gradle 编译，不生成/使用 gradlew（wrapper 步骤在云端容易失败）
       - name: 编译 Debug APK
         run: |
-          export PATH="/opt/gradle-8.7/bin:$PATH"
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          export PATH="$GRADLE_HOME/bin:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          java -version
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          gradle assembleDebug --no-daemon --stacktrace
+          echo "=== 产物 ==="
+          find app/build/outputs -type f -name "*.apk" || true
 
       - name: 上传 APK 到 Actions 产物
         uses: actions/upload-artifact@v4
